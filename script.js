@@ -100,8 +100,9 @@ function loadAuthenticatedDashboard(session) {
   accounts = (Array.isArray(session.apiKeys) ? session.apiKeys : []).map(k => ({ name: k.name, key: k.key }));
   currentAccountIndex = accounts.length > 1 ? 'all' : 0;
   
-  // Show hamburger and logged in user
+  // Show hamburger and logout btn (logout hidden on mobile via CSS)
   document.getElementById('hamburgerBtn').style.display = ''; // remove inline override; CSS + media query take it from here
+  document.getElementById('headerLogoutBtn').style.display = '';
   document.getElementById('loggedInUser').textContent = `Logged in as: ${session.username}`;
   
   renderAccountTabs();
@@ -119,6 +120,7 @@ async function handleLogout() {
     document.getElementById('loginUsername').value = '';
     document.getElementById('loginPassword').value = '';
     document.getElementById('hamburgerBtn').style.display = 'none';
+    document.getElementById('headerLogoutBtn').style.display = 'none';
     clearLoginError();
     closeSidebar();
     showToast('Logged out');

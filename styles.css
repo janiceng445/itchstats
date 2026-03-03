@@ -1221,6 +1221,28 @@ input[type="text"]:focus, input[type="password"]:focus {
   color: var(--text);
 }
 
+/* ─── HEADER LOGOUT ─── */
+.header-logout-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  height: 32px;
+  padding: 0 0.65rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.header-logout-btn:hover {
+  border-color: var(--border-red);
+  color: var(--red);
+}
+
 /* ─── SIDEBAR ─── */
 .sidebar-overlay {
   display: none;
@@ -1396,9 +1418,10 @@ input[type="text"]:focus, input[type="password"]:focus {
 
   .header-right { gap: 0.4rem; }
 
-  /* Show hamburger, hide account tabs — sidebar handles account switching */
+  /* Show hamburger, hide account tabs + header logout — sidebar handles these on mobile */
   .hamburger-btn { display: inline-flex; }
   .account-switcher { display: none; }
+  .header-logout-btn { display: none !important; }
 
   .overview-bar {
     grid-template-columns: repeat(2, 1fr);

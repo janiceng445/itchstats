@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ITCH STATS — Game Analytics</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="logo" onclick="handleLogoTap()" style="cursor:default;user-select:none">
+    <div class="logo-dot"></div>
+    ITCH<span>STATS</span>
+  </div>
+  <div class="header-right">
+    <span id="loggedInUser" style="font-family: var(--mono); font-size: 0.75rem; color: var(--text-dim); padding-right: 1rem;"></span>
+    <div class="account-switcher" id="accountTabs"></div>
+    <button class="hamburger-btn" id="hamburgerBtn" style="display:none" onclick="openSidebar()"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- LOGIN SCREEN -->
+  <div class="login-screen" id="loginScreen">
+    <div class="login-card">
+      <div class="login-title">ITCH <span>STATS</span></div>
+      <div class="login-sub">// LOGIN TO YOUR ACCOUNT</div>
+
+      <div class="field-row">
+        <div class="field-label">Username</div>
+        <input type="text" id="loginUsername" placeholder="your.name" />
+      </div>
+
+      <div class="field-row">
+        <div class="field-label">Password</div>
+        <input type="password" id="loginPassword" placeholder="••••••••" />
+      </div>
+
+      <div class="login-error" id="loginError"></div>
+
+      <button class="primary-btn" onclick="handleLogin()">LOGIN</button>
+
+    </div>
+  </div>
+
+  <!-- ADMIN SETUP SCREEN -->
+  <div class="admin-screen" id="adminScreen">
+    <div class="admin-card">
+      <button class="admin-close-btn" id="adminCloseBtn" style="display:none" onclick="loadDashboard()">✕</button>
+      <div class="admin-title">ACCOUNT <span>MANAGER</span></div>
+      <div class="setup-sub">// CREATE DEVELOPER ACCOUNTS</div>
+
+      <div class="field-row">
+        <div class="field-label">Master Password (for admin access)</div>
+        <input type="password" id="adminPassword" placeholder="Set a master password" />
+      </div>
+
+      <div class="field-row">
+        <div class="field-label">Proxy URL (Cloudflare Worker)</div>
+        <input type="text" id="adminProxyUrl" placeholder="https://itchstats-proxy.tendo445.workers.dev/proxy" />
+      </div>
+
+      <div class="section-divider">
+        <h3 style="font-family: var(--display); font-size: 0.95rem; margin-bottom: 1.2rem; color: var(--text-dim);">DEVELOPER ACCOUNTS</h3>
+        <div id="adminAccountsList"></div>
+        <button class="add-account-btn" onclick="addAdminAccountField()">+ Add Developer Account</button>
+      </div>
+
+      <button class="primary-btn" onclick="saveAdminAccounts()" style="margin-top: 1.5rem;">SAVE & SETUP COMPLETE</button>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.75rem;">
+        <button class="secondary-btn" onclick="exportAccounts()">⬇ EXPORT</button>
+        <button class="secondary-btn" onclick="importAccounts()">⬆ IMPORT</button>
+      </div>
+      
+      <button class="secondary-btn" id="adminBackBtn" style="margin-top: 0.75rem;">Back to Login</button>
+
+      <div class="api-hint" style="margin-top: 1.5rem;">
+        Create accounts here with username/password credentials.<br>
+        Assign each account an API key and account name. Developers will login with username/password.
+      </div>
+    </div>
+  </div>
+
+  <!-- SETUP SCREEN -->
+  <div class="setup-screen" id="setupScreen">
+    <div class="setup-card">
+      <div class="setup-title">GET <span>STARTED</span></div>
+      <div class="setup-sub">// CONNECT YOUR ITCH.IO ACCOUNTS</div>
+
+      <div class="accounts-list" id="accountsList"></div>
+
+      <button class="add-account-btn" onclick="addAccountField()">+ Add Account</button>
+
+      <div class="field-row">
+        <div class="field-label">Proxy URL (Cloudflare Worker)</div>
+        <input type="text" id="proxyUrl" placeholder="https://itchstats-proxy.tendo445.workers.dev/proxy" />
+      </div>
+
+      <button class="primary-btn" onclick="saveAndLoad()">CONNECT & LOAD GAMES</button>
+
+      <div class="api-hint">
+        Your API key is stored locally in your browser only.<br>
+        Find yours at <a href="https://itch.io/user/settings/api-keys" target="_blank">itch.io → Settings → API Keys</a><br><br>
+        Need a proxy? Deploy the included <strong style="color:var(--text-dim)">worker.js</strong> to Cloudflare Workers (free).<br>
+        Then paste your worker URL above.
+      </div>
+    </div>
+  </div>
+
+  <!-- LOADING SCREEN -->
+  <div class="loading-screen" id="loadingScreen">
+    <div class="loading-text">Fetching games...</div>
+    <div class="loading-bar"></div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div class="dashboard" id="dashboard">
+
+    <div class="last-sync-bar">
+      <div class="last-sync-text">Last synced: <span id="lastSyncTime">—</span></div>
+      <div class="last-sync-text" id="activeAccountLabel"></div>
+    </div>
+
+    <!-- OVERVIEW STATS -->
+    <div class="overview-bar">
+      <div class="stat-cell">
+        <div class="stat-label">Total Downloads</div>
+        <div class="stat-value" id="totalDownloads">—</div>
+        <div class="stat-sub">across all games</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Total Views</div>
+        <div class="stat-value" id="totalViews">—</div>
+        <div class="stat-sub">page impressions</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Revenue</div>
+        <div class="stat-value highlight" id="totalRevenue">—</div>
+        <div class="stat-sub">lifetime earnings</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Games Published</div>
+        <div class="stat-value" id="totalGames">—</div>
+        <div class="stat-sub">on itch.io</div>
+      </div>
+    </div>
+
+    <!-- TOP GAMES ROW -->
+    <div class="section-header" id="topGamesHeader" style="display:none">
+      <div class="section-title">Top Performers</div>
+    </div>
+    <div class="top-games-row" id="topGamesRow" style="display:none">
+      <div class="top-game-panel">
+        <div class="top-panel-badge">Views</div>
+        <div class="top-panel-name" id="tgNameViews">—</div>
+        <div class="top-panel-stat" id="tgValViews">—</div>
+        <div class="top-panel-metric">Views</div>
+      </div>
+      <div class="top-game-panel">
+        <div class="top-panel-badge">Downloads</div>
+        <div class="top-panel-name" id="tgNameDownloads">—</div>
+        <div class="top-panel-stat" id="tgValDownloads">—</div>
+        <div class="top-panel-metric">Downloads</div>
+      </div>
+      <div class="top-game-panel">
+        <div class="top-panel-badge">Purchases</div>
+        <div class="top-panel-name" id="tgNamePurchases">—</div>
+        <div class="top-panel-stat" id="tgValPurchases">—</div>
+        <div class="top-panel-metric">Purchases</div>
+      </div>
+      <div class="top-game-panel">
+        <div class="top-panel-badge">Revenue</div>
+        <div class="top-panel-name" id="tgNameRevenue">—</div>
+        <div class="top-panel-stat money" id="tgValRevenue">—</div>
+        <div class="top-panel-metric">Revenue</div>
+      </div>
+    </div>
+
+    <!-- GAMES -->
+    <div class="section-header">
+      <div class="section-title" id="gamesSectionTitle">Your Games</div>
+      <div class="games-controls">
+        <button class="toggle-btn games-ctrl-btn" id="filterPublishedBtn" onclick="toggleFilterPublished()">Published</button>
+        <div class="sort-select-wrap">
+          <select class="sort-select" id="sortFieldSelect" onchange="setSortField(this.value)">
+            <option value="downloads">Downloads</option>
+            <option value="views">Views</option>
+            <option value="revenue">Revenue</option>
+            <option value="purchases">Purchases</option>
+            <option value="published">Date</option>
+            <option value="title">Title</option>
+          </select>
+        </div>
+        <button class="toggle-btn games-ctrl-btn sort-dir-btn" id="sortDirBtn" onclick="toggleSortDir()">↓</button>
+      </div>
+    </div>
+
+    <div class="games-grid" id="gamesGrid"></div>
+
+  </div>
+</div>
+
+<!-- GAME DETAIL MODAL -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <div class="modal-top">
+      <div id="modalCover"></div>
+      <div class="modal-cover-gradient"></div>
+      <a class="modal-itch-btn" id="modalUrl" href="#" target="_blank">Itch Page ↗</a>
+      <button class="modal-close" onclick="closeModalDirect()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-game-title" id="modalTitle">—</div>
+      <div class="modal-desc" id="modalDesc"></div>
+      <div class="modal-stats-grid">
+        <div class="modal-stat">
+          <div class="modal-stat-val" id="modalDownloads">—</div>
+          <div class="modal-stat-label">Downloads</div>
+        </div>
+        <div class="modal-stat">
+          <div class="modal-stat-val" id="modalViews">—</div>
+          <div class="modal-stat-label">Views</div>
+        </div>
+        <div class="modal-stat">
+          <div class="modal-stat-val" id="modalRevenue">—</div>
+          <div class="modal-stat-label">Revenue</div>
+        </div>
+        <div class="modal-stat">
+          <div class="modal-stat-val" id="modalPurchases">—</div>
+          <div class="modal-stat-label">Purchases</div>
+        </div>
+      </div>
+      <div class="modal-meta" id="modalMeta">
+        <div class="modal-meta-item" id="modalMetaPublished" style="display:none">
+          <div class="modal-meta-label">Published</div>
+          <div class="modal-meta-val" id="modalPublishedVal">—</div>
+        </div>
+        <div class="modal-meta-item" id="modalMetaPrice" style="display:none">
+          <div class="modal-meta-label">Price</div>
+          <div class="modal-meta-val" id="modalPriceVal">—</div>
+        </div>
+        <div class="modal-meta-item" id="modalMetaPlatforms" style="display:none">
+          <div class="modal-meta-label">Platforms</div>
+          <div class="modal-meta-val" id="modalPlatformsVal"></div>
+        </div>
+      </div>
+      <div class="chart-placeholder">
+        <div class="chart-placeholder-icon">📈</div>
+        <div class="chart-placeholder-text">
+          HISTORICAL CHARTS — COMING SOON<br>
+          Connect a database to start tracking trends over time.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- SIDEBAR -->
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-hdr">
+    <div class="sidebar-hdr-title">Menu</div>
+    <button class="sidebar-close" onclick="closeSidebar()">✕</button>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">Accounts</div>
+    <div id="sidebarAccounts"></div>
+  </div>
+  <div class="sidebar-actions">
+    <div class="sidebar-section-label">Actions</div>
+    <button class="sidebar-action-btn" onclick="closeSidebar(); syncData()">
+      <span>↻</span><span>Sync Now</span>
+    </button>
+    <button class="sidebar-action-btn sidebar-logout-btn" onclick="handleLogout()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+      <span>Logout</span>
+    </button>
+  </div>
+  <div class="sidebar-footer" id="sidebarFooter"></div>
+</div>
+
+  <script src="script.js"></script>
+</body>
+</html>

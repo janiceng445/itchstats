@@ -1,0 +1,8 @@
+# Claude internal files
+.claude/
+
+# Editor config
+.vscode/
+
+# Old single-file backup
+itchio-dashboard.html

@@ -51,7 +51,8 @@ async function restoreSession(user) {
       localStorage.setItem('itchstats_proxy', configSnap.data().proxyUrl || '');
     }
     loggedInDeveloper = data.username;
-    loadAuthenticatedDashboard({ username: data.username, apiKeys: data.apiKeys || [] });
+    const apiKeys = Array.isArray(data.apiKeys) ? data.apiKeys : [];
+    loadAuthenticatedDashboard({ username: data.username, apiKeys });
   } catch (err) {
     console.error('Session restore failed:', err);
     showLoginScreen();
@@ -96,7 +97,7 @@ async function handleLogin() {
 
 function loadAuthenticatedDashboard(session) {
   // Load with all assigned API keys
-  accounts = (session.apiKeys || []).map(k => ({ name: k.name, key: k.key }));
+  accounts = (Array.isArray(session.apiKeys) ? session.apiKeys : []).map(k => ({ name: k.name, key: k.key }));
   currentAccountIndex = accounts.length > 1 ? 'all' : 0;
   
   // Show hamburger and logged in user

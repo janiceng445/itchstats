@@ -277,6 +277,7 @@ function removeAdminApiKey(i, ki) {
 }
 
 function addAdminAccountField() {
+  developerAccounts.forEach((_, i) => syncFormToState(i));
   developerAccounts.push({ uid: null, username: '', password: '', apiKeys: [{ name: '', key: '' }], isNew: true });
   renderAdminAccountFields();
 }

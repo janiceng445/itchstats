@@ -1,6 +1,15 @@
+// ─── FIREBASE ───
+const auth = firebase.auth();
+const db   = firebase.firestore();
+
+// Usernames are stored as username@itchstats.local in Firebase Auth
+const EMAIL_DOMAIN = '@itchstats.local';
+const toEmail = u => u.toLowerCase().replace(/\s+/g, '_') + EMAIL_DOMAIN;
+
 // ─── STATE ───
 let accounts = [];
-let developerAccounts = [];
+let developerAccounts = []; // working list in admin panel (new + existing)
+let pendingDeletes    = []; // UIDs to delete from Firestore on Save
 let allGames = [];
 let currentAccountIndex = 'all';
 let loggedInDeveloper = null;
@@ -10,7 +19,6 @@ let sortDir = 'desc';
 
 // ─── INIT ───
 window.addEventListener('DOMContentLoaded', () => {
-  // Enter key triggers login from either input
   ['loginUsername', 'loginPassword'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => {
       if (e.key === 'Enter') handleLogin();
@@ -19,31 +27,36 @@ window.addEventListener('DOMContentLoaded', () => {
 
   filterPublished = localStorage.getItem('itchstats_filter_published') === 'true';
   sortField = localStorage.getItem('itchstats_sort_field') || 'downloads';
-  sortDir = localStorage.getItem('itchstats_sort_dir') || 'desc';
+  sortDir   = localStorage.getItem('itchstats_sort_dir')   || 'desc';
 
-  const savedDeveloperAccounts = localStorage.getItem('itchstats_dev_accounts');
-  const savedProxy = localStorage.getItem('itchstats_proxy');
-  
-  if (savedDeveloperAccounts) {
-    developerAccounts = JSON.parse(savedDeveloperAccounts);
-  }
-
-  // Check if user was previously logged in
-  const savedSession = localStorage.getItem('itchstats_session');
-  if (savedSession) {
-    const session = JSON.parse(savedSession);
-    loggedInDeveloper = session.username;
-    loadAuthenticatedDashboard(session);
-    return;
-  }
-
-  // Show login if accounts exist, otherwise show admin setup
-  if (developerAccounts.length > 0) {
-    showLoginScreen();
-  } else {
-    showAdminSetup();
-  }
+  // Firebase Auth handles session restore automatically
+  auth.onAuthStateChanged(async user => {
+    if (user) {
+      await restoreSession(user);
+    } else {
+      showLoginScreen();
+    }
+  });
 });
+
+async function restoreSession(user) {
+  try {
+    const [userSnap, configSnap] = await Promise.all([
+      db.collection('users').doc(user.uid).get(),
+      db.collection('config').doc('app').get()
+    ]);
+    if (!userSnap.exists) { await auth.signOut(); return; }
+    const data = userSnap.data();
+    if (configSnap.exists) {
+      localStorage.setItem('itchstats_proxy', configSnap.data().proxyUrl || '');
+    }
+    loggedInDeveloper = data.username;
+    loadAuthenticatedDashboard({ username: data.username, apiKeys: data.apiKeys || [] });
+  } catch (err) {
+    console.error('Session restore failed:', err);
+    showLoginScreen();
+  }
+}
 
 // ─── AUTHENTICATION ───
 function showLoginError(msg) {
@@ -58,10 +71,9 @@ function clearLoginError() {
   el.classList.remove('visible');
 }
 
-function handleLogin() {
+async function handleLogin() {
   const username = document.getElementById('loginUsername').value.trim();
   const password = document.getElementById('loginPassword').value.trim();
-
   clearLoginError();
 
   if (!username || !password) {
@@ -69,22 +81,17 @@ function handleLogin() {
     return;
   }
 
-  const dev = developerAccounts.find(a => a.username === username);
-  if (!dev || dev.password !== password) {
+  const loginBtn = document.querySelector('#loginScreen .primary-btn');
+  if (loginBtn) loginBtn.disabled = true;
+
+  try {
+    await auth.signInWithEmailAndPassword(toEmail(username), password);
+    // onAuthStateChanged → restoreSession handles the rest
+    showToast(`Welcome, ${username}!`);
+  } catch {
     showLoginError('Invalid username or password.');
-    return;
+    if (loginBtn) loginBtn.disabled = false;
   }
-
-  // Store session with all API keys
-  const session = {
-    username: dev.username,
-    apiKeys: dev.apiKeys || []
-  };
-  localStorage.setItem('itchstats_session', JSON.stringify(session));
-  loggedInDeveloper = username;
-
-  loadAuthenticatedDashboard(session);
-  showToast(`Welcome, ${username}!`);
 }
 
 function loadAuthenticatedDashboard(session) {
@@ -100,9 +107,9 @@ function loadAuthenticatedDashboard(session) {
   loadDashboard();
 }
 
-function handleLogout() {
+async function handleLogout() {
   if (confirm('Log out?')) {
-    localStorage.removeItem('itchstats_session');
+    await auth.signOut();
     loggedInDeveloper = null;
     accounts = [];
     allGames = [];
@@ -113,8 +120,8 @@ function handleLogout() {
     document.getElementById('hamburgerBtn').style.display = 'none';
     clearLoginError();
     closeSidebar();
-    showLoginScreen();
     showToast('Logged out');
+    // onAuthStateChanged fires → showLoginScreen()
   }
 }
 
@@ -127,11 +134,8 @@ function showLoginScreen() {
   document.getElementById('loggedInUser').textContent = '';
 }
 
-function showAdminSetup() {
-  const savedProxy = localStorage.getItem('itchstats_proxy');
-  if (savedProxy) document.getElementById('adminProxyUrl').value = savedProxy;
-
-  const backBtn = document.getElementById('adminBackBtn');
+async function showAdminSetup() {
+  const backBtn  = document.getElementById('adminBackBtn');
   const closeBtn = document.getElementById('adminCloseBtn');
   if (loggedInDeveloper) {
     backBtn.textContent = '← Back to Dashboard';
@@ -143,193 +147,204 @@ function showAdminSetup() {
     closeBtn.style.display = 'none';
   }
 
+  document.getElementById('loginScreen').style.display    = 'none';
+  document.getElementById('adminScreen').style.display    = 'flex';
+  document.getElementById('setupScreen').style.display    = 'none';
+  document.getElementById('dashboard').style.display      = 'none';
+  document.getElementById('loadingScreen').style.display  = 'none';
+
+  await loadAdminPanel();
+}
+
+// Load proxy URL + all users from Firestore into admin panel
+async function loadAdminPanel() {
+  const list = document.getElementById('adminAccountsList');
+  list.innerHTML = '<div style="color:var(--text-muted);font-family:var(--mono);font-size:0.72rem;padding:1rem 0;">Loading...</div>';
+
+  try {
+    const [configSnap, usersSnap] = await Promise.all([
+      db.collection('config').doc('app').get(),
+      db.collection('users').get()
+    ]);
+
+    if (configSnap.exists) {
+      document.getElementById('adminProxyUrl').value = configSnap.data().proxyUrl || '';
+    }
+
+    developerAccounts = usersSnap.docs.map(doc => ({
+      uid:      doc.id,
+      username: doc.data().username || '',
+      isAdmin:  doc.data().isAdmin  || false,
+      apiKeys:  doc.data().apiKeys  || [],
+      isNew:    false
+    }));
+  } catch {
+    developerAccounts = [];
+  }
+
+  pendingDeletes = [];
   renderAdminAccountFields();
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('adminScreen').style.display = 'flex';
-  document.getElementById('setupScreen').style.display = 'none';
-  document.getElementById('dashboard').style.display = 'none';
-  document.getElementById('loadingScreen').style.display = 'none';
 }
 
 function renderAdminAccountFields() {
   const list = document.getElementById('adminAccountsList');
-  const items = developerAccounts.length > 0 ? developerAccounts : [];
-  
-  if (items.length === 0) {
-    list.innerHTML = '<div style="color: var(--text-muted); font-family: var(--mono); font-size: 0.72rem; padding: 1rem 0;">No accounts created yet.</div>';
+
+  if (developerAccounts.length === 0) {
+    list.innerHTML = '<div style="color:var(--text-muted);font-family:var(--mono);font-size:0.72rem;padding:1rem 0;">No accounts yet. Click "+ Add Developer Account" to create one.</div>';
     return;
   }
 
-  list.innerHTML = items.map((a, i) => {
+  list.innerHTML = developerAccounts.map((a, i) => {
     const keysHtml = (a.apiKeys || []).map((k, ki) => `
       <div>
-        <div style="display: grid; grid-template-columns: auto 1fr 1fr; gap: 0.5rem; margin-bottom: 0.2rem;">
-          <div style="width: 24px;"></div>
+        <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:0.5rem;margin-bottom:0.2rem;">
+          <div style="width:24px;"></div>
           <div class="field-label">Account Name</div>
           <div class="field-label">API Key</div>
         </div>
-        <div style="display: grid; grid-template-columns: auto 1fr 1fr; gap: 0.5rem; margin-bottom: 0.6rem; align-items: center;">
-          <button class="remove-btn" onclick="removeAdminApiKey(${i}, ${ki})" style="margin: 0; width: 24px; height: 24px; padding: 0; flex-shrink: 0;" title="Remove API Key">✕</button>
-          <input type="text" value="${k.name}" id="admin-name-${i}-${ki}" style="width: 100%;" />
-          <div style="position: relative; display: flex; align-items: center;">
-            <input type="password" value="${k.key}" id="admin-key-${i}-${ki}" style="width: 100%; font-size: 0.65rem; padding-right: 2rem;" />
-            <button class="copy-btn" onclick="toggleKeyVisibility(${i}, ${ki})" style="position: absolute; right: 0.5rem; margin: 0; padding: 0; background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-dim);">👁</button>
+        <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:0.5rem;margin-bottom:0.6rem;align-items:center;">
+          <button class="remove-btn" onclick="removeAdminApiKey(${i},${ki})" style="margin:0;width:24px;height:24px;padding:0;flex-shrink:0;" title="Remove">✕</button>
+          <input type="text" value="${k.name}" id="admin-name-${i}-${ki}" style="width:100%;" />
+          <div style="position:relative;display:flex;align-items:center;">
+            <input type="password" value="${k.key}" id="admin-key-${i}-${ki}" style="width:100%;font-size:0.65rem;padding-right:2rem;" />
+            <button class="copy-btn" onclick="toggleKeyVisibility(${i},${ki})" style="position:absolute;right:0.5rem;margin:0;padding:0;background:none;border:none;cursor:pointer;font-size:1rem;color:var(--text-dim);">👁</button>
           </div>
         </div>
-      </div>
-    `).join('');
-    
+      </div>`).join('');
+
+    const newBadge = a.isNew
+      ? `<span style="font-family:var(--mono);font-size:0.6rem;color:#4caf7d;letter-spacing:0.08em;margin-left:0.5rem;">NEW</span>`
+      : `<span style="font-family:var(--mono);font-size:0.6rem;color:var(--text-muted);letter-spacing:0.06em;margin-left:0.5rem;">${a.uid ? '…' + a.uid.slice(-6) : ''}</span>`;
+
     return `
-      <div style="background: var(--bg3); padding: 1.2rem; border: 1px solid var(--border); margin-bottom: 1.5rem;">
-        <div class="account-entry-admin" id="admin-entry-${i}">
+      <div style="background:var(--bg3);padding:1.2rem;border:1px solid var(--border);margin-bottom:1.5rem;">
+        <div class="account-entry-admin">
           <div>
-            <div class="field-label" style="margin-bottom: 0.2rem;">Username</div>
-            <input type="text" value="${a.username}" id="admin-user-${i}" style="width: 100%;" />
+            <div class="field-label" style="margin-bottom:0.2rem;">Username ${newBadge}</div>
+            <input type="text" value="${a.username}" id="admin-user-${i}" style="width:100%;" ${!a.isNew ? 'readonly style="width:100%;opacity:0.6;"' : ''}/>
           </div>
           <div>
-            <div class="field-label" style="margin-bottom: 0.2rem;">Password</div>
-            <input type="password" value="${a.password}" id="admin-pass-${i}" style="width: 100%;" />
+            <div class="field-label" style="margin-bottom:0.2rem;">${a.isNew ? 'Password' : 'Password (set on creation)'}</div>
+            <input type="password" id="admin-pass-${i}" placeholder="${a.isNew ? 'Set password' : 'Cannot change here'}" style="width:100%;" ${!a.isNew ? 'disabled' : ''}/>
           </div>
         </div>
-        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
-          <div style="font-family: var(--mono); font-size: 0.68rem; color: var(--text-dim); margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em;">API Keys:</div>
+        <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);">
+          <div style="font-family:var(--mono);font-size:0.68rem;color:var(--text-dim);margin-bottom:0.8rem;text-transform:uppercase;letter-spacing:0.08em;">API Keys</div>
           ${keysHtml}
-          <button class="add-account-btn" onclick="addAdminApiKey(${i})" style="margin: 0; margin-bottom: 0.8rem;">+ Add Another API Key</button>
-          <button class="remove-btn" onclick="confirmDeleteAccount(${i})" style="width: 100%; margin: 0;" title="Delete this account">Delete Account</button>
+          <button class="add-account-btn" onclick="addAdminApiKey(${i})" style="margin:0;margin-bottom:0.8rem;">+ Add API Key</button>
+          <button class="remove-btn" onclick="confirmDeleteAccount(${i})" style="width:100%;margin:0;">Delete Account</button>
         </div>
-      </div>
-    `;
+      </div>`;
   }).join('');
 }
 
 function toggleKeyVisibility(i, ki) {
-  const input = document.getElementById(`admin-key-${i}-${ki}`);
-  input.type = input.type === 'password' ? 'text' : 'password';
+  const el = document.getElementById(`admin-key-${i}-${ki}`);
+  el.type = el.type === 'password' ? 'text' : 'password';
 }
 
-function addAdminApiKey(i) {
-  // Sync form data to developerAccounts first (prevents data loss on re-render)
-  if (!developerAccounts[i]) {
-    developerAccounts[i] = { username: '', password: '', apiKeys: [] };
-  }
-  
-  // Read current form values for this account
+function syncFormToState(i) {
+  if (!developerAccounts[i]) return;
   const userEl = document.getElementById(`admin-user-${i}`);
   const passEl = document.getElementById(`admin-pass-${i}`);
   if (userEl) developerAccounts[i].username = userEl.value.trim();
   if (passEl) developerAccounts[i].password = passEl.value.trim();
-  
-  // Read existing API keys from form
-  if (!developerAccounts[i].apiKeys) developerAccounts[i].apiKeys = [];
-  developerAccounts[i].apiKeys = [];
+
+  const keys = [];
   let ki = 0;
   while (true) {
-    const nameEl = document.getElementById(`admin-name-${i}-${ki}`);
-    const keyEl = document.getElementById(`admin-key-${i}-${ki}`);
-    if (!nameEl) break;
-    
-    const name = nameEl.value.trim();
-    const key = keyEl.value.trim();
-    if (name || key) {
-      developerAccounts[i].apiKeys.push({ name, key });
-    }
+    const n = document.getElementById(`admin-name-${i}-${ki}`);
+    const k = document.getElementById(`admin-key-${i}-${ki}`);
+    if (!n) break;
+    const name = n.value.trim(), key = k.value.trim();
+    if (name || key) keys.push({ name, key });
     ki++;
   }
-  
-  // Now add the new empty API key
+  developerAccounts[i].apiKeys = keys;
+}
+
+function addAdminApiKey(i) {
+  syncFormToState(i);
   developerAccounts[i].apiKeys.push({ name: '', key: '' });
   renderAdminAccountFields();
 }
 
 function removeAdminApiKey(i, ki) {
-  if (developerAccounts[i].apiKeys) {
-    developerAccounts[i].apiKeys.splice(ki, 1);
-    renderAdminAccountFields();
-  }
-}
-
-function addAdminAccountField() {
-  const i = developerAccounts.length;
-  // Add placeholder account to the array so it's tracked
-  developerAccounts.push({ username: '', password: '', apiKeys: [{ name: '', key: '' }] });
+  syncFormToState(i);
+  developerAccounts[i].apiKeys.splice(ki, 1);
   renderAdminAccountFields();
 }
 
-function removeAdminAccount(i) {
+function addAdminAccountField() {
+  developerAccounts.push({ uid: null, username: '', password: '', apiKeys: [{ name: '', key: '' }], isNew: true });
+  renderAdminAccountFields();
+}
+
+function confirmDeleteAccount(i) {
+  const acc = developerAccounts[i];
+  if (acc.uid) pendingDeletes.push(acc.uid);
   developerAccounts.splice(i, 1);
   renderAdminAccountFields();
 }
 
-function saveAdminAccounts() {
-  const adminPass = document.getElementById('adminPassword').value.trim();
+async function saveAdminAccounts() {
   const proxyUrl = document.getElementById('adminProxyUrl').value.trim();
+  if (!proxyUrl) { showToast('Please enter your Cloudflare Worker proxy URL', true); return; }
 
-  if (!adminPass) {
-    showToast('Please set a master password', true);
-    return;
-  }
-  if (!proxyUrl) {
-    showToast('Please enter your Cloudflare Worker proxy URL', true);
-    return;
-  }
+  // Sync all form rows to state before saving
+  developerAccounts.forEach((_, i) => syncFormToState(i));
 
-  const newAccounts = [];
-  let i = 0;
-  while (true) {
-    const user = document.getElementById(`admin-user-${i}`);
-    if (!user) break;
+  const saveBtn = document.querySelector('#adminScreen .primary-btn');
+  if (saveBtn) saveBtn.disabled = true;
+  showToast('Saving…');
 
-    const pass = document.getElementById(`admin-pass-${i}`);
-    const username = user.value.trim();
-    const password = pass.value.trim();
+  try {
+    // 1 — Save proxy URL
+    await db.collection('config').doc('app').set({ proxyUrl });
+    localStorage.setItem('itchstats_proxy', proxyUrl);
 
-    if (username && password) {
-      // Collect all API keys for this account
-      const apiKeys = [];
-      let ki = 0;
-      while (true) {
-        const nameEl = document.getElementById(`admin-name-${i}-${ki}`);
-        const keyEl = document.getElementById(`admin-key-${i}-${ki}`);
-        if (!nameEl) break;
-        
-        const name = nameEl.value.trim();
-        const key = keyEl.value.trim();
-        if (name && key) {
-          apiKeys.push({ name, key });
-        }
-        ki++;
-      }
-
-      if (apiKeys.length > 0) {
-        newAccounts.push({ username, password, apiKeys });
-      }
+    // 2 — Create new accounts
+    for (const acc of developerAccounts.filter(a => a.isNew)) {
+      if (!acc.username || !acc.password) { showToast('New accounts need a username and password', true); return; }
+      await createFirebaseUser(acc.username, acc.password, acc.apiKeys);
     }
-    i++;
+
+    // 3 — Update existing accounts' API keys
+    for (const acc of developerAccounts.filter(a => !a.isNew && a.uid)) {
+      await db.collection('users').doc(acc.uid).update({ apiKeys: acc.apiKeys });
+    }
+
+    // 4 — Execute pending deletes
+    for (const uid of pendingDeletes) {
+      await db.collection('users').doc(uid).delete();
+    }
+    pendingDeletes = [];
+
+    showToast('Saved!');
+    await loadAdminPanel(); // refresh list from Firestore
+  } catch (err) {
+    showToast('Error: ' + err.message, true);
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
   }
+}
 
-  if (newAccounts.length === 0) {
-    showToast('Please add at least one developer account with API keys', true);
-    return;
+async function createFirebaseUser(username, password, apiKeys) {
+  // Use a secondary app instance so admin's own session is not replaced
+  const secondary = firebase.initializeApp(firebase.app().options, 'tmp_' + Date.now());
+  const secAuth   = firebase.auth(secondary);
+  try {
+    const cred = await secAuth.createUserWithEmailAndPassword(toEmail(username), password);
+    await db.collection('users').doc(cred.user.uid).set({ username, isAdmin: false, apiKeys: apiKeys || [] });
+  } finally {
+    await secondary.delete();
   }
-
-  developerAccounts = newAccounts;
-  localStorage.setItem('itchstats_dev_accounts', JSON.stringify(developerAccounts));
-  localStorage.setItem('itchstats_proxy', proxyUrl);
-  localStorage.setItem('itchstats_admin_pass', adminPass);
-
-  showToast('Accounts saved! Developers can now login.');
-  setTimeout(() => showLoginScreen(), 1000);
 }
 
 // ─── EXPORT / IMPORT ───
 function exportAccounts() {
-  const adminPass = document.getElementById('adminPassword').value.trim();
   const proxyUrl = document.getElementById('adminProxyUrl').value.trim();
 
-  if (!adminPass) {
-    showToast('Please set a master password first', true);
-    return;
-  }
   if (!proxyUrl) {
     showToast('Please enter your proxy URL first', true);
     return;
@@ -342,11 +357,9 @@ function exportAccounts() {
     const user = document.getElementById(`admin-user-${i}`);
     if (!user) break;
 
-    const pass = document.getElementById(`admin-pass-${i}`);
     const username = user.value.trim();
-    const password = pass.value.trim();
 
-    if (username && password) {
+    if (username) {
       const apiKeys = [];
       let ki = 0;
       while (true) {
@@ -363,17 +376,16 @@ function exportAccounts() {
       }
 
       if (apiKeys.length > 0) {
-        currentAccounts.push({ username, password, apiKeys });
+        currentAccounts.push({ username, apiKeys });
       }
     }
     i++;
   }
 
   const backup = {
-    version: 1,
+    version: 2,
     exportDate: new Date().toISOString(),
-    adminPassword: adminPass,
-    proxyUrl: proxyUrl,
+    proxyUrl,
     developerAccounts: currentAccounts.length > 0 ? currentAccounts : developerAccounts
   };
 
@@ -404,15 +416,13 @@ function importAccounts() {
       try {
         const backup = JSON.parse(ev.target.result);
 
-        if (!backup.adminPassword || !backup.proxyUrl || !backup.developerAccounts) {
+        if (!backup.proxyUrl || !backup.developerAccounts) {
           showToast('Invalid backup file format', true);
           return;
         }
 
-        // Load the backup into forms
-        document.getElementById('adminPassword').value = backup.adminPassword;
         document.getElementById('adminProxyUrl').value = backup.proxyUrl;
-        developerAccounts = backup.developerAccounts;
+        developerAccounts = backup.developerAccounts.map(a => ({ ...a, uid: a.uid || null, isNew: !a.uid }));
         
         renderAdminAccountFields();
         showToast(`Imported ${backup.developerAccounts.length} accounts! Review before saving.`);
@@ -892,20 +902,3 @@ function formatRevenue(earnings) {
 // Keep cents() as an alias for backwards compat
 function cents(val) { return earningsAmt(val); }
 
-// ─── SETTINGS SHORTCUT (long press logo) ───
-let logoTimer;
-const logoEl = document.querySelector('.logo');
-if (logoEl) {
-  logoEl.addEventListener('mousedown', () => {
-    logoTimer = setTimeout(() => {
-      const adminPass = localStorage.getItem('itchstats_admin_pass');
-      const pass = prompt('Enter master password to access admin panel:');
-      if (pass && pass === adminPass) {
-        showAdminSetup();
-      } else if (pass !== null) {
-        showToast('Invalid password', true);
-      }
-    }, 1200);
-  });
-  logoEl.addEventListener('mouseup', () => clearTimeout(logoTimer));
-}

@@ -53,10 +53,7 @@
       <div class="admin-title">ACCOUNT <span>MANAGER</span></div>
       <div class="setup-sub">// CREATE DEVELOPER ACCOUNTS</div>
 
-      <div class="field-row">
-        <div class="field-label">Master Password (for admin access)</div>
-        <input type="password" id="adminPassword" placeholder="Set a master password" />
-      </div>
+
 
       <div class="field-row">
         <div class="field-label">Proxy URL (Cloudflare Worker)</div>
@@ -286,6 +283,11 @@
   <div class="sidebar-footer" id="sidebarFooter"></div>
 </div>
 
+  <!-- Firebase (compat SDK — works without module bundler) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

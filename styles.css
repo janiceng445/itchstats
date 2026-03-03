@@ -1260,7 +1260,7 @@ input[type="text"]:focus, input[type="password"]:focus {
   top: 0;
   left: 0;
   width: 280px;
-  height: 100vh;
+  height: 100dvh;
   background: var(--bg2);
   border-right: 1px solid var(--border);
   z-index: 150;
@@ -1398,7 +1398,7 @@ input[type="text"]:focus, input[type="password"]:focus {
 }
 
 .sidebar-footer {
-  padding: 1rem 1.25rem;
+  padding: 1rem 1.25rem calc(1rem + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
   font-family: var(--mono);
   font-size: 0.62rem;
